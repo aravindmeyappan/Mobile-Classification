@@ -3,6 +3,7 @@ import numpy as np
 class neural_network():
 
     def __init__(
+        self,
         layer_dims, 
         num_iterations=1000, 
         learning_rate=0.01, 
@@ -18,6 +19,11 @@ class neural_network():
         self.epsilon = epsilon
         self.parameters = {}
         self.grads = {}
+        self.v = {}
+        self.s = {}
+        self.L = len(self.layer_dims) # including the input layer as well
+        self.m = None # number of examples
+        self.t = 0 # time step for ADAM
 
     def tanh(self, x):
         return np.tanh(x)
@@ -78,6 +84,9 @@ class neural_network():
         gamma - the parameter gamma associated with normalization. Dimension - (number of units in current layer, 1)
         beta - the parameter associated with normalization. Dimension - (number of units in current layer, 1)
 
+        Note:
+        The parameter beta is not to be mistaken with the hyper parameters beta1 and beta2
+
         Outputs:
         Z_tilde - the scaled version of Z_normalized obtained from batch_normalize
         """
@@ -114,9 +123,8 @@ class neural_network():
         gamma - (number of units in current layer, 1)
         beta - (number of units in current layer, 1)
         """
-        L = len(self.layer_dims)
     
-        for l in range(1, L):
+        for l in range(1, self.L):
             # following the logic that the dimension of the weights of any layer will be 
             # (number of units in current layer, number of units in prev layer)
             self.parameters[f'W{l}'] = np.random.randn(self.layer_dims[l], self.layer_dims[l-1]) * np.sqrt(2 / self.layer_dims[l-1])
@@ -139,8 +147,8 @@ class neural_network():
         """
         caches = []
         A = X
-        L = len(self.parameters) // 4  # There are 4 parameters for each layer W,b,gamma,beta
-    
+        L = len(self.parameters) // 4
+       
         for l in range(1, L):
             # A_prev gets updated in each iteration as A keeps getting updated in each iteration
             A_prev = A
@@ -269,10 +277,86 @@ class neural_network():
         for l in reversed(range(L-1)):
             current_cache = caches[l]
             linear_cache, batch_cache, activation_cache = current_cache
-            dZ_tilde = self.activation_backward(grads[f'dA{l+1}'], activation_cache, "relu")
+            dZ_tilde = self.activation_backward(self.grads[f'dA{l+1}'], activation_cache, "relu")
             dZ, dGamma, dBeta = self.batch_normalize_backward(dZ_tilde, batch_cache)
             dA_prev, dW, db = self.linear_backward(dZ, linear_cache)
             self.grads[f'dA{l}'], self.grads[f'dW{l+1}'], self.grads[f'db{l+1}'] = dA_prev, dW, db
             self.grads[f'dGamma{l+1}'], self.grads[f'dBeta{l+1}'] = dGamma, dBeta
     
         return 
+
+    def initialize_adam(self):
+        L = len(self.parameters) // 4  # Considering gamma and beta for each layer
+        
+        for l in range(1, L+1):
+            self.v[f'dW{l}'] = np.zeros_like(self.parameters[f'W{l}'])
+            self.v[f'db{l}'] = np.zeros_like(self.parameters[f'b{l}'])
+            self.v[f'dGamma{l}'] = np.zeros_like(self.parameters[f'gamma{l}'])
+            self.v[f'dBeta{l}'] = np.zeros_like(self.parameters[f'beta{l}'])
+    
+            self.s[f'dW{l}'] = np.zeros_like(self.parameters[f'W{l}'])
+            self.s[f'db{l}'] = np.zeros_like(self.parameters[f'b{l}'])
+            self.s[f'dGamma{l}'] = np.zeros_like(self.parameters[f'gamma{l}'])
+            self.s[f'dBeta{l}'] = np.zeros_like(self.parameters[f'beta{l}'])
+    
+        return 
+
+    def update_parameters_adam(self):
+        
+        L = len(self.parameters) // 4  # Considering gamma and beta for each layer
+    
+        for l in range(1, L+1):
+            self.v[f'dW{l}'] = self.beta1 * self.v[f'dW{l}'] + (1 - self.beta1) * self.grads[f'dW{l}']
+            self.v[f'db{l}'] = self.beta1 * self.v[f'db{l}'] + (1 - self.beta1) * self.grads[f'db{l}']
+            self.v[f'dGamma{l}'] = self.beta1 * self.v[f'dGamma{l}'] + (1 - self.beta1) * self.grads[f'dGamma{l}']
+            self.v[f'dBeta{l}'] = self.beta1 * self.v[f'dBeta{l}'] + (1 - self.beta1) * self.grads[f'dBeta{l}']
+    
+            self.s[f'dW{l}'] = self.beta2 * self.s[f'dW{l}'] + (1 - self.beta2) * (self.grads[f'dW{l}']**2)
+            self.s[f'db{l}'] = self.beta2 * self.s[f'db{l}'] + (1 - self.beta2) * (self.grads[f'db{l}']**2)
+            self.s[f'dGamma{l}'] = self.beta2 * self.s[f'dGamma{l}'] + (1 - self.beta2) * (self.grads[f'dGamma{l}']**2)
+            self.s[f'dBeta{l}'] = self.beta2 * self.s[f'dBeta{l}'] + (1 - self.beta2) * (self.grads[f'dBeta{l}']**2)
+    
+            v_corrected_dW = self.v[f'dW{l}'] / (1 - self.beta1**self.t)
+            v_corrected_db = self.v[f'db{l}'] / (1 - self.beta1**self.t)
+            v_corrected_dGamma = self.v[f'dGamma{l}'] / (1 - self.beta1**self.t)
+            v_corrected_dBeta = self.v[f'dBeta{l}'] / (1 - self.beta1**self.t)
+    
+            s_corrected_dW = self.s[f'dW{l}'] / (1 - self.beta2**self.t)
+            s_corrected_db = self.s[f'db{l}'] / (1 - self.beta2**self.t)
+            s_corrected_dGamma = self.s[f'dGamma{l}'] / (1 - self.beta2**self.t)
+            s_corrected_dBeta = self.s[f'dBeta{l}'] / (1 - self.beta2**self.t)
+    
+            self.parameters[f'W{l}'] -= self.learning_rate * v_corrected_dW / (np.sqrt(s_corrected_dW) + self.epsilon)
+            self.parameters[f'b{l}'] -= self.learning_rate * v_corrected_db / (np.sqrt(s_corrected_db) + self.epsilon)
+            self.parameters[f'gamma{l}'] -= self.learning_rate * v_corrected_dGamma / (np.sqrt(s_corrected_dGamma) + self.epsilon)
+            self.parameters[f'beta{l}'] -= self.learning_rate * v_corrected_dBeta / (np.sqrt(s_corrected_dBeta) + self.epsilon)
+
+        return 
+    
+    def fit(self, X, Y):
+        activations = ["relu"] * (len(self.layer_dims) - 2) + ["softmax"]
+
+        self.n, self.m = X.shape
+
+        self.initialize_parameters_deep()
+        self.initialize_adam()
+
+        for i in range(self.num_iters):
+            AL, caches = self.forward_propagation_deep(X, activations)
+            cost = self.compute_cost(AL, Y)
+            self.backward_propagation_deep(AL, Y, caches, activations)
+    
+            # Update parameters with Adam
+            self.t += 1
+            self.update_parameters_adam()
+    
+            if i % 1000 == 0:
+                print(f'Cost after iteration {i}: {cost}')
+        return "Fitting Complete"
+
+    def predict_deep(self, X):
+        activations = ["relu"] * (len(self.layer_dims) - 2) + ["softmax"]
+        AL, _ = self.forward_propagation_deep(X, activations)
+        predictions = np.argmax(AL, axis=0)
+        return predictions
+            
